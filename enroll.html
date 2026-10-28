@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Student Enrollment — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">ONE-TIME ENROLLMENT</div>
+  </div>
+  <main>
+    <div class="stage">
+      <div class="panel">
+        <h1 class="title">Enroll your face — once</h1>
+        <p class="lede">Do this <strong>once</strong>, ideally with a TA or professor watching. Every class check-in afterwards is matched against the face captured here — not against anything captured on the day, so this step is what actually keeps someone else from checking in as you.</p>
+
+        <div id="page-alert"></div>
+
+        <form id="enroll-form">
+          <div class="field">
+            <label for="name">Full name</label>
+            <input type="text" id="name" placeholder="e.g. Ananya Sharma" required autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label for="rollNo">Roll number</label>
+            <input type="text" id="rollNo" placeholder="e.g. 22CSE114" required autocomplete="off">
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="phone">Phone number</label>
+              <input type="tel" id="phone" placeholder="10-digit mobile" pattern="[0-9]{10}" maxlength="10" required autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="branch">Branch</label>
+              <select id="branch" required>
+                <option value="" disabled selected>Select</option>
+                <option value="CSE">CSE</option>
+                <option value="DSAI">DSAI</option>
+                <option value="ECE">ECE</option>
+                <option value="AIC">AIC</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="email">Institute email ID</label>
+            <input type="email" id="email" placeholder="name.branch@institute.edu" required autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label>Capture your face</label>
+            <p class="field-hint" style="margin-top:-2px; margin-bottom:10px;">Well-lit, facing the camera, no sunglasses/mask. This is the one photo every future check-in gets compared against.</p>
+
+            <div id="reg-alert"></div>
+
+            <div class="cam-frame" id="reg-frame" style="width:190px; height:190px;">
+              <video id="reg-video" autoplay muted playsinline></video>
+              <canvas id="reg-canvas" style="display:none;"></canvas>
+              <img id="reg-preview" style="display:none;" alt="Captured enrollment photo">
+            </div>
+
+            <div class="status-line" id="reg-status"><span class="blip"></span> Requesting camera permission…</div>
+
+            <div class="toolbar" style="justify-content:center;">
+              <button type="button" class="btn btn-ghost btn-sm" id="capture-btn" disabled>Capture photo</button>
+              <button type="button" class="btn btn-ghost btn-sm" id="retake-btn" style="display:none;">Retake</button>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="submit-btn">Complete enrollment</button>
+        </form>
+        <p class="footnote" id="err" style="color:var(--danger); display:none;"></p>
+      </div>
+      <p class="footnote">Already enrolled? <a href="student-login.html">Go straight to check-in →</a></p>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script src="js/store.js"></script>
+<script src="js/util.js"></script>
+<script>
+  const form = document.getElementById('enroll-form');
+  const err = document.getElementById('err');
+  const pageAlert = document.getElementById('page-alert');
+
+  const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+
+  const regFrame = document.getElementById('reg-frame');
+  const regVideo = document.getElementById('reg-video');
+  const regCanvas = document.getElementById('reg-canvas');
+  const regPreview = document.getElementById('reg-preview');
+  const regStatus = document.getElementById('reg-status');
+  const regAlert = document.getElementById('reg-alert');
+  const captureBtn = document.getElementById('capture-btn');
+  const retakeBtn = document.getElementById('retake-btn');
+  const submitBtn = document.getElementById('submit-btn');
+  const rollNoInput = document.getElementById('rollNo');
+
+  let modelsReady = false;
+  let cameraStream = null;
+  let capturedDescriptor = null;
+  let capturedPhotoDataUrl = null;
+
+  function showRegError(msg) { regAlert.innerHTML = `<div class="alert alert-warn">${Util.escapeHtml(msg)}</div>`; }
+  function clearRegError() { regAlert.innerHTML = ''; }
+  function setStatus(msg, warn) {
+    regStatus.classList.toggle('warn', !!warn);
+    regStatus.innerHTML = `<span class="blip"></span> ${Util.escapeHtml(msg)}`;
+  }
+
+  function stopCamera() {
+    if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  }
+
+  async function startCamera() {
+    if (!window.isSecureContext) {
+      regFrame.classList.add('err');
+      setStatus('Camera blocked in this context', true);
+      showRegError('Face capture needs a secure context — open this page over http://localhost or https://, not by double-clicking the file. See the README for a one-line fix.');
+      captureBtn.disabled = true;
+      return;
+    }
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      regVideo.srcObject = cameraStream;
+      regVideo.style.display = 'block';
+      regPreview.style.display = 'none';
+      setStatus(modelsReady ? 'Center your face and capture' : 'Loading face-verification model…');
+      maybeEnableCapture();
+    } catch (e) {
+      regFrame.classList.add('err');
+      setStatus('Camera not accessible', true);
+      if (e && e.name === 'NotAllowedError') {
+        showRegError('Camera permission was denied. Allow camera access in your browser\'s site settings, then reload this page.');
+      } else {
+        showRegError('Couldn\'t start the camera. Check that no other app is using it, then reload this page.');
+      }
+    }
+  }
+
+  async function loadModels() {
+    try {
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+      modelsReady = true;
+      maybeEnableCapture();
+    } catch (e) {
+      showRegError('Couldn\'t load the face-verification model (check your internet connection) — reload this page to try again.');
+    }
+  }
+
+  function maybeEnableCapture() {
+    if (modelsReady && cameraStream && !capturedDescriptor) {
+      captureBtn.disabled = false;
+      setStatus('Center your face and capture');
+    }
+  }
+
+  captureBtn.addEventListener('click', async () => {
+    clearRegError();
+    captureBtn.disabled = true;
+    setStatus('Capturing…');
+    try {
+      const result = await faceapi
+        .detectSingleFace(regVideo, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks(true)
+        .withFaceDescriptor();
+
+      if (!result) {
+        showRegError('No face detected — make sure you\'re well-lit and centered in frame, then try again.');
+        setStatus('Center your face and capture');
+        captureBtn.disabled = false;
+        return;
+      }
+
+      regCanvas.width = regVideo.videoWidth;
+      regCanvas.height = regVideo.videoHeight;
+      regCanvas.getContext('2d').drawImage(regVideo, 0, 0, regCanvas.width, regCanvas.height);
+      capturedPhotoDataUrl = regCanvas.toDataURL('image/jpeg', 0.85);
+      capturedDescriptor = Array.from(result.descriptor);
+
+      regPreview.src = capturedPhotoDataUrl;
+      regPreview.style.display = 'block';
+      regVideo.style.display = 'none';
+      regFrame.classList.add('ok');
+      stopCamera();
+
+      captureBtn.style.display = 'none';
+      retakeBtn.style.display = 'inline-flex';
+      setStatus('Face captured ✓');
+    } catch (e) {
+      showRegError('Something went wrong capturing the photo — try again.');
+      setStatus('Center your face and capture');
+      captureBtn.disabled = false;
+    }
+  });
+
+  retakeBtn.addEventListener('click', async () => {
+    clearRegError();
+    capturedDescriptor = null;
+    capturedPhotoDataUrl = null;
+    regFrame.classList.remove('ok');
+    retakeBtn.style.display = 'none';
+    captureBtn.style.display = 'inline-flex';
+    captureBtn.disabled = true;
+    setStatus('Requesting camera permission…');
+    await startCamera();
+  });
+
+  startCamera();
+  loadModels();
+
+  rollNoInput.addEventListener('blur', () => {
+    const rollNo = rollNoInput.value.trim().toUpperCase();
+    if (rollNo && Store.isEnrolled(rollNo)) {
+      pageAlert.innerHTML = `<div class="alert alert-warn">${Util.escapeHtml(rollNo)} is already enrolled. Submitting again will <strong>replace</strong> the stored face — only do this with staff supervision (e.g. a lost/changed appearance re-enrollment), not on your own.</div>`;
+    } else {
+      pageAlert.innerHTML = '';
+    }
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+
+    const name = document.getElementById('name').value.trim();
+    const rollNo = rollNoInput.value.trim().toUpperCase();
+    const phone = document.getElementById('phone').value.trim();
+    const branch = document.getElementById('branch').value;
+    const instituteEmail = document.getElementById('email').value.trim();
+
+    if (!/^[0-9]{10}$/.test(phone)) {
+      err.textContent = 'Enter a valid 10-digit phone number.';
+      err.style.display = 'block';
+      return;
+    }
+    if (!instituteEmail.includes('@')) {
+      err.textContent = 'Enter a valid institute email address.';
+      err.style.display = 'block';
+      return;
+    }
+    if (!capturedDescriptor) {
+      err.textContent = 'Capture your face before completing enrollment.';
+      err.style.display = 'block';
+      regFrame.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    err.style.display = 'none';
+    Store.enrollStudent({
+      name, rollNo, phone, branch, instituteEmail,
+      faceDescriptor: capturedDescriptor,
+      facePhoto: capturedPhotoDataUrl
+    });
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Enrolled ✓';
+    pageAlert.innerHTML = `<div class="alert alert-success">${Util.escapeHtml(name)} (${Util.escapeHtml(rollNo)}) is enrolled. You can now check in to any class.</div>`;
+    setTimeout(() => { window.location.href = 'student-login.html'; }, 1200);
+  });
+</script>
+</body>
+</html>

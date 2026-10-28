@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Confirm Location — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">STUDENT CHECK-IN</div>
+  </div>
+  <main>
+    <div class="stage">
+      <div class="panel">
+        <div class="rail">
+          <div class="step done"><span class="n">✓</span>Scan</div><div class="line"></div>
+          <div class="step active"><span class="n">2</span>Connect</div><div class="line"></div>
+          <div class="step"><span class="n">3</span>Verify</div><div class="line"></div>
+          <div class="step"><span class="n">4</span>Done</div>
+        </div>
+        <h1 class="title">Confirm you're in the classroom</h1>
+        <p class="lede">Two independent, best-effort proximity checks — Wi-Fi and Bluetooth. Either (or both) strengthens your attendance record, but neither blocks you: your QR scan and face match are what actually verify your check-in.</p>
+
+        <div id="page-alert"></div>
+
+        <div class="data-strip">
+          <div class="row"><span>Session</span><span id="sess-id">—</span></div>
+        </div>
+
+        <h2 class="section-label">Wi-Fi network</h2>
+        <div class="data-strip">
+          <div class="row"><span>Status</span><span id="net-status">Checking…</span></div>
+        </div>
+        <div id="net-alert"></div>
+
+        <h2 class="section-label">Bluetooth (optional)</h2>
+        <div class="data-strip">
+          <div class="row"><span>Expected device</span><span id="expected-name">—</span></div>
+          <div class="row"><span>Pairing code</span><span id="expected-code">—</span></div>
+          <div class="row"><span>Connection status</span><span id="device-name">Not connected</span></div>
+        </div>
+
+        <button class="btn btn-primary" id="pair-btn">Connect via Bluetooth</button>
+        <button class="btn btn-ghost" id="skip-btn" style="margin-top:10px;">Continue</button>
+        <p class="footnote" id="note"></p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="js/store.js"></script>
+<script src="js/util.js"></script>
+<script>
+  const esc = Util.escapeHtml;
+  const session = Store.getSession();
+  const student = Store.getStudent();
+  if (!session || !student) window.location.href = 'index.html';
+  if (Store.isLocked()) {
+    document.querySelector('main').innerHTML = `<div class="panel stage"><div class="alert alert-warn">This session has been closed by the professor.</div><a class="btn btn-ghost" href="index.html">Back to start</a></div>`;
+  }
+
+  document.getElementById('sess-id').textContent = session.id;
+  document.getElementById('expected-name').textContent = session.bluetoothDeviceName || '(not set by professor)';
+  document.getElementById('expected-code').textContent = session.bluetoothCode || '(not set)';
+  document.getElementById('tok') && (document.getElementById('tok').textContent = sessionStorage.getItem('ams_scanned_token') || '—');
+
+  const btn = document.getElementById('pair-btn');
+  const skipBtn = document.getElementById('skip-btn');
+  const note = document.getElementById('note');
+  const deviceName = document.getElementById('device-name');
+  const pageAlert = document.getElementById('page-alert');
+  const netStatus = document.getElementById('net-status');
+  const netAlert = document.getElementById('net-alert');
+
+  function showError(msg) {
+    pageAlert.innerHTML = `<div class="alert alert-warn">${msg}</div>`;
+  }
+  function showInfo(msg) {
+    pageAlert.innerHTML = `<div class="alert alert-info">${msg}</div>`;
+  }
+
+  // ---------- Wi-Fi network check ----------
+  // If the professor's and this student's devices are both behind the
+  // classroom/campus router (which almost all routers do via NAT), they'll
+  // report the same public IP address to an outside service. This works in
+  // every browser with zero permission prompts — unlike Web Bluetooth,
+  // which many devices simply can't be discovered through at all.
+  //
+  // This is a signal, not a guarantee: a large campus network that NATs the
+  // whole building/campus behind one address will match ANY student on that
+  // network, not just this room; a student on mobile data or a VPN will
+  // legitimately mismatch even if they're in the room. So a mismatch here
+  // is treated as informative, not disqualifying — see README for the
+  // trade-offs and what a hard requirement would need instead (e.g. school
+  // network cooperation to check the specific access point/VLAN).
+  async function checkNetwork() {
+    if (!session.professorNetworkIp) {
+      netStatus.textContent = 'Not available for this session';
+      sessionStorage.setItem('ams_net_verified', 'unknown');
+      return;
+    }
+    try {
+      const res = await fetch('https://api.ipify.org?format=json');
+      const data = await res.json();
+      const studentIp = data && data.ip;
+      if (studentIp && studentIp === session.professorNetworkIp) {
+        netStatus.textContent = 'Matches professor\'s network ✓';
+        netStatus.style.color = 'var(--success)';
+        sessionStorage.setItem('ams_net_verified', 'true');
+      } else {
+        netStatus.textContent = 'Different network detected';
+        netStatus.style.color = 'var(--danger)';
+        netAlert.innerHTML = `<div class="alert alert-warn">Your device doesn't appear to be on the same network as the professor's. If you're on mobile data, switch to the classroom Wi-Fi and reload this page. If you believe this is wrong (e.g. a large campus network), it's fine to continue — this check alone won't block you.</div>`;
+        sessionStorage.setItem('ams_net_verified', 'false');
+      }
+    } catch (e) {
+      netStatus.textContent = 'Could not check (offline or blocked)';
+      sessionStorage.setItem('ams_net_verified', 'unknown');
+    }
+  }
+  const networkCheckDone = checkNetwork();
+
+  const bleSupported = 'bluetooth' in navigator;
+  const expectedName = (session.bluetoothDeviceName || '').trim();
+  // The one-time code the professor generated for this session and appended
+  // to their device's broadcast name — used IF a matching device shows up.
+  // See README: Web Bluetooth's requestDevice() only discovers BLE devices
+  // actively broadcasting a GATT service. An ordinary phone/laptop just
+  // "visible" in its Bluetooth settings is almost always Classic Bluetooth,
+  // which this API can't see at all — so this step frequently finds
+  // nothing, through no fault of the student or professor. That's why it's
+  // optional rather than blocking: QR rotation + face match (elsewhere in
+  // the flow) are the checks that actually hold up at classroom scale.
+  const expectedCode = (session.bluetoothCode || '').trim().toUpperCase();
+
+  if (!window.isSecureContext) {
+    showError('Bluetooth pairing needs a secure context — open this page over http://localhost or https://, not by double-clicking the file. See the README for a one-line fix.');
+  } else if (!bleSupported) {
+    note.textContent = "Web Bluetooth isn't available in this browser (e.g. iPhone Safari, Firefox). Use \"Continue\" below.";
+  } else if (!expectedCode) {
+    note.textContent = "The professor didn't set a Bluetooth pairing code for this session, so this step can't be verified even if a device is found. Use \"Continue\" below.";
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Connecting…';
+    pageAlert.innerHTML = '';
+
+    if (bleSupported && window.isSecureContext && expectedCode) {
+      // Cascade: try a filtered picker first (fast, precise when it works), then
+      // fall back to an unfiltered "show all devices" picker before giving up.
+      // A namePrefix filter alone doesn't scale in a full classroom — many nearby
+      // phones/laptops advertise names that don't share the professor's exact
+      // prefix, so Chrome's chooser can come back empty even though the right
+      // device is in range. Letting the student see the full list and pick
+      // manually recovers those cases where the device DOES show up at all.
+      const attempts = expectedName
+        ? [
+            { filters: [{ namePrefix: expectedName.slice(0, 12) }], optionalServices: [] },
+            { acceptAllDevices: true, optionalServices: [] }
+          ]
+        : [{ acceptAllDevices: true, optionalServices: [] }];
+
+      for (let i = 0; i < attempts.length; i++) {
+        try {
+          if (i === 1) showInfo('No device matched that name automatically — showing all nearby Bluetooth devices so you can pick the professor\'s device manually.');
+          const device = await navigator.bluetooth.requestDevice(attempts[i]);
+          const chosenName = (device.name || '').trim();
+
+          // The real check: the professor's one-time session code must appear
+          // in the broadcast name the student actually selected. A wrong or
+          // spoofed device won't know this code, so this can't be passed by
+          // coincidence the way a common device name ("iPhone") could be.
+          if (!chosenName.toUpperCase().includes(expectedCode)) {
+            deviceName.textContent = chosenName + ' (rejected)';
+            showError(`"${esc(chosenName)}" doesn't include this session's pairing code (${esc(expectedCode)}). Pick the correct device, or use "Continue" below.`);
+            btn.disabled = false;
+            btn.textContent = 'Try again';
+            return;
+          }
+
+          deviceName.textContent = (chosenName || 'Paired device') + ' ✓';
+          await finishPairing(true);
+          return;
+        } catch (e) {
+          // User cancelled, or the chooser found no devices for this attempt
+          // (very likely if the professor's device isn't a BLE peripheral —
+          // see the note above). Not treated as a pass; try the next,
+          // broader attempt if one remains.
+        }
+      }
+      showInfo('No device with this session\'s pairing code was found. This is common — most phones/laptops aren\'t discoverable this way. Use "Continue" below; your QR scan and face match still verify your check-in.');
+      btn.disabled = false;
+      btn.textContent = 'Try again';
+      return;
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Connect via Bluetooth';
+  });
+
+  skipBtn.addEventListener('click', async () => {
+    skipBtn.disabled = true;
+    skipBtn.textContent = 'Continuing…';
+    deviceName.textContent = deviceName.textContent === 'Not connected' ? 'Skipped (unverified)' : deviceName.textContent;
+    await finishPairing(false);
+  });
+
+  async function finishPairing(bluetoothVerified) {
+    // Wait for the network check so its result is captured even if it's
+    // still in flight when the student clicks through quickly.
+    await networkCheckDone;
+    sessionStorage.setItem('ams_bt_verified', bluetoothVerified ? 'true' : 'false');
+    btn.disabled = true;
+    skipBtn.disabled = true;
+    setTimeout(() => window.location.href = 'liveness.html', 400);
+  }
+</script>
+</body>
+</html>

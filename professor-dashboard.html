@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Session Dashboard — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta" id="session-id">SESSION —</div>
+  </div>
+  <main>
+    <div class="stage stage-wide">
+      <div class="panel">
+        <h1 class="title">Project this for your class</h1>
+        <p class="lede">Each QR code is valid for a few seconds only. Students who scan an expired code are asked to rescan — a screenshot or a second-hand scan won't work.</p>
+
+        <div class="session-header" id="session-header"></div>
+        <div id="locked-banner"></div>
+
+        <div class="alert alert-info" style="margin-bottom:18px;">
+          Everything on this page lives only in <strong>this browser</strong> — closing the tab or switching devices loses it. <button class="btn btn-ghost btn-small" id="backup-btn" style="margin-left:8px;">Download backup (.json)</button>
+        </div>
+
+        <div id="review-section" style="display:none; margin-bottom:24px;">
+          <h2 class="section-label">Pending manual reviews</h2>
+          <p class="field-hint" style="margin-bottom:12px;">A student reported a camera/face-model problem during liveness. Only approve this if you can see the student in the room right now — this bypasses the face check.</p>
+          <div id="review-list"></div>
+        </div>
+
+        <div id="live-area" style="display:grid; grid-template-columns: 260px 1fr; gap:32px; align-items:start;">
+          <div>
+            <div class="viewfinder">
+              <div class="pulse-ring"></div>
+              <div class="corner tl"></div><div class="corner tr"></div>
+              <div class="corner bl"></div><div class="corner br"></div>
+              <div id="qrcode"></div>
+              <span id="qr-fallback" style="display:none; color:var(--text-faint); font-family:var(--font-mono); font-size:0.72rem; text-align:center; padding:0 16px;">QR RENDER FAILED — USE THE CODE BELOW</span>
+            </div>
+
+            <div class="qr-timer">
+              <div class="ring">
+                <svg width="34" height="34" viewBox="0 0 34 34">
+                  <circle class="ring-bg" cx="17" cy="17" r="14"/>
+                  <circle class="ring-fg" id="ring-fg" cx="17" cy="17" r="14" stroke-dasharray="88" stroke-dashoffset="0"/>
+                </svg>
+                <div class="ring-num" id="ring-num">6</div>
+              </div>
+              <div class="lbl">seconds left on this code</div>
+            </div>
+
+            <div class="manual-code">
+              <div class="lbl">CAN'T SCAN? ENTER THIS CODE</div>
+              <div class="code" id="manual-code">——————</div>
+            </div>
+
+            <div class="toolbar" style="justify-content:center;">
+              <button class="btn btn-danger btn-sm" id="close-btn">Close session</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="summary-grid" style="grid-template-columns: repeat(2,1fr);">
+              <div class="summary-card">
+                <div class="num" id="present-count">0</div>
+                <div class="lbl">Marked present</div>
+              </div>
+              <div class="summary-card">
+                <div class="num" id="last-marked">—</div>
+                <div class="lbl">Last check-in</div>
+              </div>
+            </div>
+            <div class="table-scroll">
+              <table class="roster">
+                <thead>
+                  <tr><th>Name</th><th>Roll No.</th><th>Branch</th><th>Time</th><th>Status</th><th>Bluetooth</th><th>Wi-Fi</th></tr>
+                </thead>
+                <tbody id="roster-body">
+                  <tr><td colspan="7" style="color:var(--text-faint);">Waiting for the first check-in…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="js/qrcode-lib.js"></script>
+<script src="js/store.js"></script>
+<script src="js/util.js"></script>
+<script>
+  const esc = Util.escapeHtml;
+  let session = Store.getSession();
+  if (!session) {
+    window.location.href = 'professor-login.html';
+    throw new Error('no active session — redirecting');
+  }
+
+  document.getElementById('session-id').textContent = 'SESSION ' + session.id;
+  document.getElementById('session-header').innerHTML = `
+    <div class="item"><div class="k">TEACHER</div><div class="v">${esc(session.teacherName)}</div></div>
+    <div class="item"><div class="k">SUBJECT</div><div class="v">${esc(session.subject)}</div></div>
+    <div class="item"><div class="k">LECTURE</div><div class="v">#${esc(session.lectureNo)} · ${esc(session.lectureCategory)}</div></div>
+    <div class="item"><div class="k">DATE</div><div class="v">${esc(session.classDate)}</div></div>
+    <div class="item"><div class="k">BLUETOOTH NAME</div><div class="v">${esc(session.bluetoothDeviceName) || '—'}</div></div>
+    <div class="item"><div class="k">PAIRING CODE</div><div class="v">${esc(session.bluetoothCode) || '—'}</div></div>
+    <div class="item"><div class="k">NETWORK CHECK</div><div class="v">${session.professorNetworkIp ? 'Configured' : 'Not available'}</div></div>
+    <div class="item"><div class="k">STATUS</div><div class="v"><span class="badge live">live</span></div></div>
+  `;
+
+  // Renders the QR into #qrcode using qrcode-generator (a small, dependency-free
+  // library) rather than davidshimjs/qrcodejs, which has a long-standing,
+  // unfixed bug (github.com/davidshimjs/qrcodejs/issues/292) where its
+  // constructor throws "Cannot read properties of undefined (reading
+  // '_android')" in exactly this kind of plain-<script> setup — which was
+  // silently killing the rest of this page's script, so neither the QR nor
+  // the manual code (or anything below it) ever rendered.
+  function renderQR(text) {
+    try {
+      const qr = qrcode(0, 'M'); // 0 = auto type-number, 'M' = error correction
+      qr.addData(text);
+      qr.make();
+      let svg = qr.createSvgTag({ cellSize: 5, margin: 2, scalable: true });
+      svg = svg.replace('fill="white"', 'fill="#F0F1F5"').replace('fill="black"', 'fill="#0B0F1A"');
+      const holder = document.getElementById('qrcode');
+      holder.innerHTML = svg;
+      holder.querySelector('svg').style.cssText = 'width:200px;height:200px;display:block;border-radius:6px;';
+      document.getElementById('qr-fallback').style.display = 'none';
+    } catch (e) {
+      document.getElementById('qrcode').innerHTML = '';
+      document.getElementById('qr-fallback').style.display = 'block';
+    }
+  }
+
+  renderQR(`${session.id}:${session.qrToken}`);
+  document.getElementById('manual-code').textContent = session.qrToken;
+
+  const CIRC = 88; // 2 * PI * r(14)
+  function refreshQR() {
+    session = Store.getSession();
+    if (!session || session.locked) return;
+    const token = Store.rotateToken();
+    renderQR(`${session.id}:${token}`);
+    document.getElementById('manual-code').textContent = token;
+  }
+  setInterval(refreshQR, Store.ROTATE_MS);
+
+  function tickRing() {
+    session = Store.getSession();
+    if (!session || session.locked) return;
+    const remaining = Store.tokenMsRemaining();
+    const secs = Math.ceil(remaining / 1000);
+    document.getElementById('ring-num').textContent = secs;
+    const frac = remaining / Store.TOKEN_VALID_MS;
+    document.getElementById('ring-fg').style.strokeDashoffset = CIRC * (1 - frac);
+  }
+  setInterval(tickRing, 200);
+  tickRing();
+
+  function renderRoster() {
+    const records = Store.getAttendance(session.id);
+    const body = document.getElementById('roster-body');
+    document.getElementById('present-count').textContent = records.length;
+    if (records.length === 0) {
+      body.innerHTML = '<tr><td colspan="7" style="color:var(--text-faint);">Waiting for the first check-in…</td></tr>';
+      document.getElementById('last-marked').textContent = '—';
+      return;
+    }
+    document.getElementById('last-marked').textContent =
+      new Date(records[records.length - 1].markedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    body.innerHTML = records.slice().reverse().map(r => `
+      <tr>
+        <td>${esc(r.name) || '—'}</td>
+        <td>${esc(r.rollNo)}</td>
+        <td>${esc(r.branch)}</td>
+        <td>${new Date(r.markedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+        <td><span class="badge present">present</span>${r.manuallyApproved ? ' <span class="badge">manual</span>' : ''}</td>
+        <td>${r.bluetoothVerified ? '<span class="badge present">verified</span>' : '<span class="badge absent">unverified</span>'}</td>
+        <td>${r.networkVerified === true ? '<span class="badge present">match</span>' : r.networkVerified === false ? '<span class="badge absent">mismatch</span>' : '<span class="badge">—</span>'}</td>
+      </tr>
+    `).join('');
+  }
+  renderRoster();
+  setInterval(renderRoster, 2000);
+
+  // ---------- Pending manual reviews ----------
+  function renderReviews() {
+    const list = Store.getPendingReviews(session.id).filter(r => r.status === 'pending');
+    const section = document.getElementById('review-section');
+    const container = document.getElementById('review-list');
+    if (list.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    container.innerHTML = list.map(r => `
+      <div class="data-strip" style="margin-bottom:10px;">
+        <div class="row"><span>Student</span><span>${esc(r.name)} (${esc(r.rollNo)}, ${esc(r.branch)})</span></div>
+        <div class="row"><span>Reason</span><span>${esc(r.reason)}</span></div>
+        <div class="row"><span>Flagged at</span><span>${new Date(r.flaggedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span></div>
+        <div class="toolbar" style="justify-content:flex-start; margin-top:10px;">
+          <button class="btn btn-success btn-sm review-approve" data-id="${esc(r.id)}">Approve — I can see them</button>
+          <button class="btn btn-ghost btn-sm review-reject" data-id="${esc(r.id)}">Reject</button>
+        </div>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('.review-approve').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        const entry = Store.getPendingReviews(session.id).find(r => r.id === id);
+        if (!entry) return;
+        Store.approveReview(session.id, id, { name: entry.name, rollNo: entry.rollNo, branch: entry.branch, phone: '', instituteEmail: '' });
+        renderReviews();
+        renderRoster();
+      });
+    });
+    container.querySelectorAll('.review-reject').forEach(btn => {
+      btn.addEventListener('click', () => {
+        Store.rejectReview(session.id, btn.getAttribute('data-id'));
+        renderReviews();
+      });
+    });
+  }
+  renderReviews();
+  setInterval(renderReviews, 2000);
+
+  // ---------- Backup ----------
+  document.getElementById('backup-btn').addEventListener('click', () => {
+    const data = Store.exportBackup();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `presence_backup_${session.id}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  function showLockedState() {
+    document.getElementById('locked-banner').innerHTML = `
+      <div class="alert alert-warn">Session closed — no further check-ins are being accepted. Download the report below.</div>
+    `;
+    document.querySelector('.qr-timer').style.display = 'none';
+    document.querySelector('.pulse-ring').style.display = 'none';
+    document.getElementById('manual-code').textContent = '——————';
+    document.getElementById('close-btn').outerHTML = `<a class="btn btn-primary btn-sm" href="report.html">Open attendance report</a>`;
+  }
+
+  document.getElementById('close-btn').addEventListener('click', () => {
+    if (!confirm('Close this session? Students will no longer be able to mark attendance.')) return;
+    Store.closeSession();
+    showLockedState();
+  });
+
+  if (session.locked) showLockedState();
+</script>
+</body>
+</html>

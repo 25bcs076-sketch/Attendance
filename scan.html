@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan QR — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">STUDENT CHECK-IN</div>
+  </div>
+  <main>
+    <div class="stage">
+      <div class="panel">
+        <div class="rail">
+          <div class="step active"><span class="n">1</span>Scan</div><div class="line"></div>
+          <div class="step"><span class="n">2</span>Pair</div><div class="line"></div>
+          <div class="step"><span class="n">3</span>Verify</div><div class="line"></div>
+          <div class="step"><span class="n">4</span>Done</div>
+        </div>
+
+        <div id="closed-notice" style="display:none;">
+          <div class="alert alert-warn">This session has been closed by the professor. Attendance can no longer be marked for this class.</div>
+          <a class="btn btn-ghost" href="index.html">Back to start</a>
+        </div>
+
+        <div id="scan-area">
+          <h1 class="title">Scan the projected QR code</h1>
+          <p class="lede">Point your camera at the QR code on the professor's screen. Codes expire every few seconds, so make sure you're scanning the current one.</p>
+
+          <div id="page-alert"></div>
+
+          <div class="viewfinder">
+            <div class="pulse-ring"></div>
+            <div class="corner tl"></div><div class="corner tr"></div>
+            <div class="corner bl"></div><div class="corner br"></div>
+            <video id="video" style="width:100%; height:100%; object-fit:cover; border-radius:10px; display:none;" playsinline muted></video>
+            <canvas id="canvas" style="display:none;"></canvas>
+            <span id="placeholder" style="color:var(--text-faint); font-family:var(--font-mono); font-size:0.8rem; text-align:center; padding:0 20px;">CAMERA STARTING…</span>
+          </div>
+
+          <div class="status-line" id="status"><span class="blip"></span> Looking for a code…</div>
+
+          <div class="divider"></div>
+
+          <div class="field">
+            <label for="manual-input">Or type the code shown next to the QR</label>
+            <input type="text" id="manual-input" placeholder="e.g. 8K3P2Q" maxlength="6" style="text-transform:uppercase; letter-spacing:0.12em; font-family:var(--font-mono);">
+          </div>
+          <button class="btn btn-ghost" id="manual-btn">Submit code</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.js"></script>
+<script src="js/store.js"></script>
+<script>
+  const student = Store.getStudent();
+  if (!student) window.location.href = 'student-login.html';
+
+  if (Store.isLocked()) {
+    document.getElementById('scan-area').style.display = 'none';
+    document.getElementById('closed-notice').style.display = 'block';
+  }
+
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const placeholder = document.getElementById('placeholder');
+  const status = document.getElementById('status');
+  const pageAlert = document.getElementById('page-alert');
+  let scanning = true;
+
+  function showError(msg) {
+    pageAlert.innerHTML = `<div class="alert alert-warn">${msg}</div>`;
+  }
+  function clearError() {
+    pageAlert.innerHTML = '';
+  }
+
+  function validateAndProceed(rawData) {
+    if (!scanning) return;
+
+    // Expect "SESSIONID:TOKEN"
+    const parts = String(rawData).split(':');
+    const token = parts.length > 1 ? parts[1] : rawData;
+
+    if (Store.isLocked()) {
+      showError('This session has been closed by the professor.');
+      document.getElementById('scan-area').style.display = 'none';
+      document.getElementById('closed-notice').style.display = 'block';
+      return;
+    }
+
+    if (!Store.isTokenValid(token)) {
+      showError('That code has expired — this QR refreshes every few seconds. Scan the code currently on screen.');
+      status.classList.add('warn');
+      status.innerHTML = '<span class="blip"></span> Code expired, still scanning…';
+      setTimeout(() => { status.classList.remove('warn'); status.innerHTML = '<span class="blip"></span> Looking for a code…'; }, 2200);
+      return;
+    }
+
+    scanning = false;
+    clearError();
+    sessionStorage.setItem('ams_scanned_token', token);
+    status.innerHTML = '<span class="blip"></span> Code recognized — connecting…';
+    setTimeout(() => window.location.href = 'bluetooth.html', 500);
+  }
+
+  navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(stream => {
+      video.srcObject = stream;
+      video.style.display = 'block';
+      placeholder.style.display = 'none';
+      video.play();
+      requestAnimationFrame(tick);
+    })
+    .catch((e) => {
+      if (!window.isSecureContext) {
+        placeholder.innerHTML = 'CAMERA BLOCKED — open this page over http://localhost or https://, not by double-clicking the file (see README)';
+      } else {
+        placeholder.textContent = 'CAMERA PERMISSION DENIED — allow camera access or use the code field below';
+      }
+      status.classList.add('warn');
+      status.innerHTML = '<span class="blip"></span> Camera not accessible';
+    });
+
+  function tick() {
+    if (!scanning) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if (code) {
+        validateAndProceed(code.data);
+        if (scanning) requestAnimationFrame(tick);
+        return;
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+
+  document.getElementById('manual-btn').addEventListener('click', () => {
+    const val = document.getElementById('manual-input').value.trim().toUpperCase();
+    if (!val) { showError('Enter the code shown next to the QR first.'); return; }
+    validateAndProceed(val);
+  });
+  document.getElementById('manual-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('manual-btn').click();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Presence — Attendance Verification</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta"><span class="live-dot"></span> NO-PROXY ATTENDANCE · DEMO BUILD</div>
+  </div>
+  <main>
+    <div class="stage stage-wide">
+      <h1 class="title" style="font-size:2.1rem; text-align:center;">Who's checking in?</h1>
+      <p class="lede" style="text-align:center; max-width:520px; margin-left:auto; margin-right:auto;">Choose a role to continue. QR proximity and face verification are required for every check-in; Bluetooth and Wi-Fi add extra confidence when a student's device supports them.</p>
+
+      <div class="hero-flow">
+        <div class="node">
+          <div class="ic">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 4h6v6H4V4zm10 0h6v6h-6V4zM4 14h6v6H4v-6zm12 1h2v2h-2v-2zm2 2h2v2h-2v-2zm-2 2h2v2h-2v-2z" fill="currentColor"/></svg>
+          </div>
+          <div class="lb">Scan QR</div>
+        </div>
+        <div class="connector"></div>
+        <div class="node">
+          <div class="ic">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12-6 6V0l6 6L6 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="lb">Pair Bluetooth</div>
+        </div>
+        <div class="connector"></div>
+        <div class="node">
+          <div class="ic">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M8 12c0-1 1-2 2-2M14 10c1 0 2 1 2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <div class="lb">Liveness check</div>
+        </div>
+        <div class="connector"></div>
+        <div class="node">
+          <div class="ic">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4 10-10" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="lb">Marked present</div>
+        </div>
+      </div>
+
+      <div class="role-grid">
+        <a class="role-card" href="student-login.html">
+          <div class="icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4 20c0-4 3.5-7 8-7s8 3 8 7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <h3>I'm a student</h3>
+          <p>Check in with your roll number, scan the professor's QR code, and confirm you're physically in the room. First time? You'll enroll your face once, up front.</p>
+          <div class="arrow">Continue →</div>
+        </a>
+        <a class="role-card" href="professor-login.html">
+          <div class="icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 21h8M12 17v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <h3>I'm the professor</h3>
+          <p>Set up today's class, project the rotating QR code, and watch the roster fill in live.</p>
+          <div class="arrow">Continue →</div>
+        </a>
+      </div>
+      <p class="footnote">Prototype for classroom demo · data is stored locally in this browser only</p>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attendance Report — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">SESSION REPORT</div>
+  </div>
+  <main>
+    <div class="stage stage-report">
+      <div class="panel">
+        <h1 class="title">Attendance report</h1>
+        <p class="lede">Full record of who checked in, with every field students and the professor entered. Download as Excel or CSV, or print to PDF for submission.</p>
+
+        <div class="session-header" id="session-header"></div>
+        <div id="lock-alert"></div>
+
+        <div class="summary-grid" id="summary-grid"></div>
+
+        <div class="field no-print" style="max-width:100%;">
+          <label for="roster-paste">Optional: paste the full class roll list (one per line or comma-separated) to also list absentees</label>
+          <input type="text" id="roster-paste" placeholder="22CSE101, 22CSE102, 22CSE103 …">
+        </div>
+
+        <div class="toolbar no-print">
+          <button class="btn btn-primary btn-sm" id="apply-roster">Apply roll list</button>
+          <button class="btn btn-success btn-sm" id="export-xlsx">Download Excel (.xlsx)</button>
+          <button class="btn btn-ghost btn-sm" id="export-csv">Export CSV</button>
+          <button class="btn btn-ghost btn-sm" id="print-btn">Print / Save as PDF</button>
+          <a class="btn btn-ghost btn-sm" href="professor-dashboard.html">Back to dashboard</a>
+        </div>
+
+        <div class="table-scroll">
+          <table class="roster" id="report-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Roll No.</th>
+                <th>Branch</th>
+                <th>Status</th>
+                <th>Bluetooth</th>
+                <th>Wi-Fi</th>
+                <th>Phone</th>
+                <th>Institute email</th>
+                <th>Time marked</th>
+                <th>Lecture</th>
+                <th>Date</th>
+                <th>Subject</th>
+                <th>Teacher</th>
+              </tr>
+            </thead>
+            <tbody id="report-body"></tbody>
+          </table>
+        </div>
+
+        <p class="footnote">Verification method for present entries: QR scan (token valid ~6s) + Bluetooth pairing to the professor's named device + liveness (blink) check + face match against the photo registered at check-in.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="js/store.js"></script>
+<script src="js/util.js"></script>
+<script>
+  const esc = Util.escapeHtml;
+  const session = Store.getSession();
+  if (!session) {
+    document.querySelector('main').innerHTML = `
+      <div class="panel stage">
+        <h1 class="title">No active session</h1>
+        <p class="lede">Start a session from the professor login page first.</p>
+        <a class="btn btn-primary" href="professor-login.html">Go to session setup</a>
+      </div>`;
+    throw new Error('no session');
+  }
+
+  document.getElementById('session-header').innerHTML = `
+    <div class="item"><div class="k">TEACHER</div><div class="v">${esc(session.teacherName)}</div></div>
+    <div class="item"><div class="k">SUBJECT</div><div class="v">${esc(session.subject)}</div></div>
+    <div class="item"><div class="k">LECTURE</div><div class="v">#${esc(session.lectureNo)} · ${esc(session.lectureCategory)}</div></div>
+    <div class="item"><div class="k">DATE</div><div class="v">${esc(session.classDate)}</div></div>
+    <div class="item"><div class="k">SESSION ID</div><div class="v">${esc(session.id)}</div></div>
+    <div class="item"><div class="k">STATUS</div><div class="v"><span class="badge ${session.locked ? 'closed' : 'live'}">${session.locked ? 'closed' : 'live'}</span></div></div>
+  `;
+
+  if (!session.locked) {
+    document.getElementById('lock-alert').innerHTML = `
+      <div class="alert alert-info">This session is still open — students can keep checking in. Close it from the dashboard once everyone's done for a final report.</div>`;
+  } else {
+    document.getElementById('lock-alert').innerHTML = `
+      <div class="alert alert-success">Session closed. This report reflects the final attendance count.</div>`;
+  }
+
+  let presentRecords = Store.getAttendance(session.id);
+  let fullRoster = null;
+
+  function buildRows() {
+    if (fullRoster) {
+      return fullRoster.map(rollNo => {
+        const rec = presentRecords.find(r => r.rollNo === rollNo);
+        return rec
+          ? { name: rec.name || '—', rollNo, branch: rec.branch, status: 'present', btVerified: rec.bluetoothVerified, netVerified: rec.networkVerified, phone: rec.phone, email: rec.instituteEmail, time: rec.markedAt }
+          : { name: '—', rollNo, branch: '—', status: 'absent', btVerified: null, netVerified: null, phone: '—', email: '—', time: '—' };
+      });
+    }
+    return presentRecords.map(r => ({
+      name: r.name || '—', rollNo: r.rollNo, branch: r.branch, status: 'present', btVerified: r.bluetoothVerified, netVerified: r.networkVerified,
+      phone: r.phone, email: r.instituteEmail, time: r.markedAt
+    }));
+  }
+
+  function render() {
+    const rows = buildRows();
+    const presentCount = rows.filter(r => r.status === 'present').length;
+    const absentCount = rows.filter(r => r.status === 'absent').length;
+
+    document.getElementById('summary-grid').innerHTML = `
+      <div class="summary-card"><div class="num">${rows.length}</div><div class="lbl">Total on record</div></div>
+      <div class="summary-card"><div class="num" style="color:var(--success);">${presentCount}</div><div class="lbl">Present</div></div>
+      <div class="summary-card"><div class="num" style="color:var(--danger);">${absentCount}</div><div class="lbl">Absent</div></div>
+      <div class="summary-card"><div class="num">${rows.length ? Math.round(presentCount / rows.length * 100) : 0}%</div><div class="lbl">Attendance rate</div></div>
+    `;
+
+    document.getElementById('report-body').innerHTML = rows.map(r => `
+      <tr>
+        <td>${esc(r.name)}</td>
+        <td>${esc(r.rollNo)}</td>
+        <td>${esc(r.branch)}</td>
+        <td><span class="badge ${r.status}">${esc(r.status)}</span></td>
+        <td>${r.btVerified === null ? '—' : (r.btVerified ? '<span class="badge present">verified</span>' : '<span class="badge absent">unverified</span>')}</td>
+        <td>${r.netVerified === true ? '<span class="badge present">match</span>' : r.netVerified === false ? '<span class="badge absent">mismatch</span>' : '—'}</td>
+        <td>${esc(r.phone)}</td>
+        <td>${esc(r.email)}</td>
+        <td>${r.time === '—' ? '—' : new Date(r.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+        <td>#${esc(session.lectureNo)} · ${esc(session.lectureCategory)}</td>
+        <td>${esc(session.classDate)}</td>
+        <td>${esc(session.subject)}</td>
+        <td>${esc(session.teacherName)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="11" style="color:var(--text-faint);">No check-ins recorded yet.</td></tr>';
+  }
+  render();
+
+  document.getElementById('apply-roster').addEventListener('click', () => {
+    const raw = document.getElementById('roster-paste').value.trim();
+    if (!raw) { fullRoster = null; render(); return; }
+    fullRoster = raw.split(/[\n,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    render();
+  });
+
+  function reportRowsForExport() {
+    return buildRows().map(r => ({
+      'Name': r.name,
+      'Roll No.': r.rollNo,
+      'Branch': r.branch,
+      'Status': r.status,
+      'Bluetooth': r.btVerified === null ? '—' : (r.btVerified ? 'verified' : 'unverified'),
+      'Wi-Fi': r.netVerified === true ? 'match' : r.netVerified === false ? 'mismatch' : '—',
+      'Phone': r.phone,
+      'Institute Email': r.email,
+      'Time Marked': r.time === '—' ? '—' : new Date(r.time).toLocaleTimeString(),
+      'Lecture No.': session.lectureNo,
+      'Lecture Category': session.lectureCategory,
+      'Date': session.classDate,
+      'Subject': session.subject,
+      'Teacher': session.teacherName
+    }));
+  }
+
+  document.getElementById('export-xlsx').addEventListener('click', () => {
+    const rows = reportRowsForExport();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 20 }, { wch: 12 }, { wch: 8 }, { wch: 9 }, { wch: 11 }, { wch: 9 }, { wch: 14 },
+      { wch: 26 }, { wch: 12 }, { wch: 11 }, { wch: 16 }, { wch: 11 },
+      { wch: 22 }, { wch: 18 }
+    ];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Attendance');
+    XLSX.writeFile(wb, `attendance_${session.id}_${session.classDate}.xlsx`);
+  });
+
+  document.getElementById('export-csv').addEventListener('click', () => {
+    const rows = reportRowsForExport();
+    const header = Object.keys(rows[0] || { 'No data': '' });
+    const lines = [header.join(',')];
+    rows.forEach(r => {
+      lines.push(header.map(h => `"${String(r[h]).replace(/"/g, '""')}"`).join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `attendance_${session.id}_${session.classDate}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('print-btn').addEventListener('click', () => window.print());
+</script>
+</body>
+</html>

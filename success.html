@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attendance Marked — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">CHECK-IN COMPLETE</div>
+  </div>
+  <main>
+    <div class="stage">
+      <div class="panel" style="text-align:center;">
+        <div class="confirm-icon">✓</div>
+        <h1 class="title">You're marked present</h1>
+        <p class="lede">Your attendance for today's class has been recorded. No further action needed.</p>
+
+        <div class="data-strip" style="text-align:left;" id="summary"></div>
+
+        <a class="btn btn-ghost" href="index.html">Back to start</a>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="js/store.js"></script>
+<script src="js/util.js"></script>
+<script>
+  const esc = Util.escapeHtml;
+  const session = Store.getSession();
+  const student = Store.getStudent();
+  if (session && student) {
+    const record = Store.getAttendance(session.id).find(r => r.rollNo === student.rollNo);
+    document.getElementById('summary').innerHTML = `
+      <div class="row"><span>Name</span><span>${esc(student.name) || '—'}</span></div>
+      <div class="row"><span>Roll No.</span><span>${esc(student.rollNo)}</span></div>
+      <div class="row"><span>Subject</span><span>${esc(session.subject)}</span></div>
+      <div class="row"><span>Lecture</span><span>#${esc(session.lectureNo)} · ${esc(session.lectureCategory)}</span></div>
+      <div class="row"><span>Date</span><span>${esc(session.classDate)}</span></div>
+      <div class="row"><span>Marked at</span><span>${record ? new Date(record.markedAt).toLocaleTimeString() : '—'}</span></div>
+    `;
+  }
+</script>
+</body>
+</html>

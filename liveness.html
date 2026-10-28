@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liveness Check — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">STUDENT CHECK-IN</div>
+  </div>
+  <main>
+    <div class="stage">
+      <div class="panel" id="main-panel">
+        <div class="rail">
+          <div class="step done"><span class="n">✓</span>Scan</div><div class="line"></div>
+          <div class="step done"><span class="n">✓</span>Connect</div><div class="line"></div>
+          <div class="step active"><span class="n">3</span>Verify</div><div class="line"></div>
+          <div class="step"><span class="n">4</span>Done</div>
+        </div>
+        <h1 class="title" id="blink-title">Look at the camera</h1>
+        <p class="lede" id="blink-lede">Loading your check…</p>
+
+        <div id="page-alert"></div>
+
+        <div class="cam-frame" id="cam-frame">
+          <video id="video" autoplay muted playsinline></video>
+        </div>
+
+        <div class="blink-tracker" id="blink-tracker"></div>
+
+        <div class="status-line" id="status"><span class="blip"></span> Starting camera…</div>
+
+        <button class="btn btn-ghost" id="report-btn">Camera or model not working? Report to professor</button>
+      </div>
+
+      <div class="panel" id="review-panel" style="display:none; text-align:center;">
+        <h1 class="title">Waiting for the professor</h1>
+        <p class="lede">Your check-in was flagged for manual approval because of a camera/model issue. The professor can see this on their dashboard — this page will move on automatically once they approve it.</p>
+        <div class="status-line" style="justify-content:center;"><span class="blip"></span> <span id="review-status-text">Waiting for approval…</span></div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script src="js/store.js"></script>
+<script src="js/util.js"></script>
+<script>
+  const session = Store.getSession();
+  const student = Store.getStudent();
+  if (!session || !student) window.location.href = 'index.html';
+
+  const mainPanel = document.getElementById('main-panel');
+  const reviewPanel = document.getElementById('review-panel');
+  const video = document.getElementById('video');
+  const status = document.getElementById('status');
+  const camFrame = document.getElementById('cam-frame');
+  const pageAlert = document.getElementById('page-alert');
+  const blinkTracker = document.getElementById('blink-tracker');
+
+  // Randomized per attempt (2 or 3) and only shown once the camera is up —
+  // a pre-recorded video of the real student blinking a fixed, predictable
+  // number of times is far less likely to line up with this.
+  const BLINKS_NEEDED = Store.pickBlinkRequirement();
+  document.getElementById('blink-title').textContent =
+    `Blink ${BLINKS_NEEDED === 2 ? 'twice' : 'three times'} to confirm you're here`;
+  document.getElementById('blink-lede').innerHTML =
+    `Look at the front camera and blink <strong>${BLINKS_NEEDED === 2 ? 'twice' : 'three times'}</strong>. This captures a verification photo, checked against your one-time face enrollment — proving a live person is present, and that it's <em>you</em>.`;
+  for (let i = 1; i <= BLINKS_NEEDED; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'blink-dot';
+    dot.id = 'blink' + i;
+    dot.textContent = i;
+    blinkTracker.appendChild(dot);
+  }
+
+  let blinkCount = 0;
+  let eyesClosedLastFrame = false;
+  let done = false;
+  let verifying = false;
+
+  if (Store.isLocked()) {
+    document.querySelector('main').innerHTML = `<div class="panel stage"><div class="alert alert-warn">This session has been closed by the professor.</div><a class="btn btn-ghost" href="index.html">Back to start</a></div>`;
+  }
+
+  const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+
+  function showError(msg) { pageAlert.innerHTML = `<div class="alert alert-warn">${Util.escapeHtml(msg)}</div>`; }
+
+  function resetBlinks(msg) {
+    blinkCount = 0;
+    for (let i = 1; i <= BLINKS_NEEDED; i++) document.getElementById('blink' + i).classList.remove('hit');
+    status.classList.remove('warn');
+    status.innerHTML = `<span class="blip"></span> ${Util.escapeHtml(msg || 'Watching for blinks…')}`;
+  }
+
+  async function markBlink() {
+    if (done || verifying) return;
+    blinkCount++;
+    document.getElementById('blink' + blinkCount).classList.add('hit');
+    if (blinkCount >= BLINKS_NEEDED) {
+      verifying = true;
+      status.innerHTML = '<span class="blip"></span> Capturing verification photo…';
+      await verifyFace();
+      verifying = false;
+    }
+  }
+
+  async function verifyFace() {
+    let result;
+    try {
+      result = await faceapi
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks(true)
+        .withFaceDescriptor();
+    } catch (e) {
+      showError('Couldn\'t capture a verification photo — stay centered in frame and blink again.');
+      resetBlinks();
+      return;
+    }
+
+    if (!result) {
+      showError('No face detected in the verification photo — stay centered in frame and blink again.');
+      resetBlinks();
+      return;
+    }
+
+    if (!Store.hasRegisteredFace()) {
+      showError('No face enrollment on file for this roll number — you need to enroll once before checking in.');
+      return;
+    }
+
+    const check = Store.matchesRegisteredFace(Array.from(result.descriptor));
+    if (!check.matched) {
+      showError('This doesn\'t match your enrolled face. Make sure it\'s really you in good lighting, then blink again.');
+      resetBlinks();
+      return;
+    }
+
+    finish();
+  }
+
+  function finish() {
+    if (done) return;
+    done = true;
+    camFrame.classList.add('ok');
+    status.innerHTML = '<span class="blip"></span> Face verified — marking attendance…';
+    const record = Store.markPresent(session.id, student);
+    if (record && record.error === 'SESSION_CLOSED') {
+      showError('The professor closed this session while you were verifying. Attendance could not be marked.');
+      return;
+    }
+    setTimeout(() => window.location.href = 'success.html', 700);
+  }
+
+  async function start() {
+    if (!window.isSecureContext) {
+      camFrame.classList.add('err');
+      status.classList.add('warn');
+      status.innerHTML = '<span class="blip"></span> Camera blocked in this context';
+      showError('Camera access needs a secure context — open this page over http://localhost or https://, not by double-clicking the file. See the README for a one-line fix. Use "Report to professor" below if you can\'t resolve this.');
+      return;
+    }
+    try {
+      status.innerHTML = '<span class="blip"></span> Loading face-tracking model…';
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
+      await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      video.srcObject = stream;
+      status.innerHTML = '<span class="blip"></span> Watching for blinks…';
+
+      const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const eyeAspectRatio = (eye) => {
+        const v1 = dist(eye[1], eye[5]);
+        const v2 = dist(eye[2], eye[4]);
+        const h = dist(eye[0], eye[3]);
+        return (v1 + v2) / (2.0 * h);
+      };
+
+      const interval = setInterval(async () => {
+        if (done) { clearInterval(interval); return; }
+        if (verifying) return;
+        try {
+          const result = await faceapi
+            .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks(true);
+          if (!result) return;
+          const left = result.landmarks.getLeftEye();
+          const right = result.landmarks.getRightEye();
+          const ear = (eyeAspectRatio(left) + eyeAspectRatio(right)) / 2;
+          const closed = ear < 0.23;
+          if (!closed && eyesClosedLastFrame) markBlink();
+          eyesClosedLastFrame = closed;
+        } catch (err) { /* transient frame error, ignore */ }
+      }, 150);
+
+    } catch (e) {
+      camFrame.classList.add('err');
+      status.classList.add('warn');
+      status.innerHTML = '<span class="blip"></span> Camera or model unavailable';
+      if (e && e.name === 'NotAllowedError') {
+        showError('Camera permission was denied. Allow camera access in your browser\'s site settings, then reload — or use "Report to professor" below.');
+      } else {
+        showError('Couldn\'t load the camera or the face-tracking model (check your internet connection). Use "Report to professor" below.');
+      }
+    }
+  }
+  start();
+
+  // Replaces the old one-click "simulate pass" bypass. A genuine
+  // camera/model failure now goes to the professor — who can actually see
+  // who's in the room — as a pending approval, instead of the student's
+  // own browser being trusted to wave itself through.
+  let reviewEntry = null;
+  let pollTimer = null;
+
+  document.getElementById('report-btn').addEventListener('click', () => {
+    if (done || reviewEntry) return;
+    reviewEntry = Store.flagForManualReview(session.id, student, 'Camera or face-model issue reported by student');
+    mainPanel.style.display = 'none';
+    reviewPanel.style.display = 'block';
+    pollTimer = setInterval(checkReviewStatus, 1500);
+    checkReviewStatus();
+  });
+
+  function checkReviewStatus() {
+    const entry = Store.getReviewStatus(session.id, reviewEntry.id);
+    const label = document.getElementById('review-status-text');
+    if (!entry) return;
+    if (entry.status === 'approved') {
+      clearInterval(pollTimer);
+      label.textContent = 'Approved — redirecting…';
+      setTimeout(() => window.location.href = 'success.html', 600);
+    } else if (entry.status === 'rejected') {
+      clearInterval(pollTimer);
+      label.textContent = 'The professor did not approve this — please try the camera check again.';
+      setTimeout(() => window.location.reload(), 2500);
+    }
+  }
+</script>
+</body>
+</html>

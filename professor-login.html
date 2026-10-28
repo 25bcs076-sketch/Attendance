@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Start a Session — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">PROFESSOR · SESSION SETUP</div>
+  </div>
+  <main>
+    <div class="stage">
+      <div class="panel">
+        <h1 class="title">Set up today's class</h1>
+        <p class="lede">These details are stamped on every attendance record students generate in this session, and appear on the final report.</p>
+
+        <form id="prof-form">
+          <div class="field">
+            <label for="teacherName">Teacher's name</label>
+            <input type="text" id="teacherName" placeholder="e.g. Dr. Anjali Mehra" required autocomplete="off">
+          </div>
+
+          <div class="field">
+            <label for="subject">Subject</label>
+            <input type="text" id="subject" placeholder="e.g. Database Management Systems" required autocomplete="off">
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="lectureNo">Lecture number</label>
+              <input type="text" id="lectureNo" placeholder="e.g. 14" required autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="lectureCategory">Lecture category</label>
+              <select id="lectureCategory" required>
+                <option value="" disabled selected>Select type</option>
+                <option value="Lecture">Lecture</option>
+                <option value="Tutorial">Tutorial</option>
+                <option value="Lab">Lab</option>
+                <option value="Quiz">Quiz</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="classDate">Date of class</label>
+            <input type="date" id="classDate" required>
+          </div>
+
+          <div class="field">
+            <label for="btName">Your device's Bluetooth name</label>
+            <input type="text" id="btName" placeholder="e.g. Anjali's iPhone / DESKTOP-4F92K" required autocomplete="off">
+            <p class="field-hint">Check this under your phone or laptop's Bluetooth settings — it's the name other devices see when they search.</p>
+          </div>
+
+          <div class="field">
+            <label>One-time pairing code for this session</label>
+            <div class="bt-code-box">
+              <span id="btCode" class="bt-code"></span>
+              <button type="button" id="btCodeRegen" class="btn btn-ghost btn-small">Regenerate</button>
+            </div>
+            <p class="field-hint">
+              <strong>If your device supports being discovered this way:</strong> go into
+              your phone/laptop's Bluetooth settings and rename it to include this code — e.g.
+              <code>Anjali's iPhone <span class="bt-code-inline"></span></code> — before starting
+              the session. Students who find a matching device get a verified Bluetooth match.
+              <strong>Note:</strong> most ordinary phones/laptops broadcast in "Classic Bluetooth"
+              mode, which browsers can't detect at all — so many students won't see any device to
+              pair with no matter what you name it, and that's expected. Bluetooth is a bonus
+              signal here, not the main check: the QR code (rotates every few seconds) and the
+              face match at check-in are what actually verify each student's attendance.
+            </p>
+          </div>
+
+          <button type="submit" class="btn btn-primary">Start session &amp; show QR</button>
+        </form>
+        <p class="footnote" id="err" style="color:var(--danger); display:none;"></p>
+      </div>
+      <p class="footnote">
+        Reopening a session after closing this browser? Session data only lives in the browser it was created in.
+        <label for="restore-input" style="color:var(--accent); cursor:pointer; text-decoration:underline;">Restore from a backup file →</label>
+        <input type="file" id="restore-input" accept="application/json" style="display:none;">
+      </p>
+    </div>
+  </main>
+</div>
+
+<script src="js/store.js"></script>
+<script>
+  document.getElementById('restore-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        Store.importBackup(data);
+        alert('Backup restored. Opening the dashboard…');
+        window.location.href = 'professor-dashboard.html';
+      } catch (err) {
+        alert('Couldn\'t read that backup file — make sure it\'s the .json file downloaded from the dashboard.');
+      }
+    };
+    reader.readAsText(file);
+  });
+</script>
+<script>
+  const form = document.getElementById('prof-form');
+  const dateInput = document.getElementById('classDate');
+  dateInput.value = new Date().toISOString().split('T')[0];
+
+  const btCodeEl = document.getElementById('btCode');
+  const btCodeInlineEls = document.querySelectorAll('.bt-code-inline');
+  function newCode() {
+    const code = Store.generateBluetoothCode();
+    btCodeEl.textContent = code;
+    btCodeInlineEls.forEach(el => el.textContent = code);
+    return code;
+  }
+  newCode();
+  document.getElementById('btCodeRegen').addEventListener('click', newCode);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Starting…';
+
+    const details = {
+      teacherName: document.getElementById('teacherName').value.trim(),
+      subject: document.getElementById('subject').value.trim(),
+      lectureNo: document.getElementById('lectureNo').value.trim(),
+      lectureCategory: document.getElementById('lectureCategory').value,
+      classDate: dateInput.value,
+      bluetoothDeviceName: document.getElementById('btName').value.trim(),
+      bluetoothCode: btCodeEl.textContent.trim()
+    };
+    Store.startSession(details);
+
+    // Capture the professor's own public IP so students' pages can compare
+    // against it (see network-check.html). This is a plain, unauthenticated
+    // lookup — if it fails (offline, firewall, slow network) the session
+    // still starts fine; the network check just becomes unavailable for
+    // this class rather than blocking anything.
+    try {
+      const res = await fetch('https://api.ipify.org?format=json');
+      const data = await res.json();
+      if (data && data.ip) Store.setProfessorIp(data.ip);
+    } catch (e) {
+      // No network reference captured — network-check.html handles this
+      // gracefully by skipping the check rather than failing students.
+    }
+
+    window.location.href = 'professor-dashboard.html';
+  });
+</script>
+</body>
+</html>

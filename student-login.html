@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Student Check-in — Presence</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="brand" href="index.html"><span class="mark">P</span> Presence</a>
+    <div class="topbar-meta">STUDENT CHECK-IN</div>
+  </div>
+  <main>
+    <div class="stage">
+      <div class="panel">
+        <h1 class="title">Check in with your roll number</h1>
+        <p class="lede">Your face is matched against the one-time enrollment you completed earlier — not a new photo — so typing someone else's roll number here won't get past the liveness step.</p>
+
+        <div id="page-alert"></div>
+
+        <form id="lookup-form">
+          <div class="field">
+            <label for="rollNo">Roll number</label>
+            <input type="text" id="rollNo" placeholder="e.g. 22CSE114" required autocomplete="off" style="text-transform:uppercase;">
+          </div>
+          <button type="submit" class="btn btn-primary" id="submit-btn">Continue</button>
+        </form>
+
+        <div id="confirm-card" style="display:none; margin-top:22px;">
+          <div class="data-strip">
+            <div class="row"><span>Is this you?</span><span id="confirm-name" style="font-weight:600;"></span></div>
+            <div class="row"><span>Branch</span><span id="confirm-branch"></span></div>
+          </div>
+          <div class="toolbar" style="justify-content:center; margin-top:14px;">
+            <button type="button" class="btn btn-primary btn-sm" id="yes-btn">Yes, continue to QR scan</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="no-btn">Not me — re-enter roll number</button>
+          </div>
+        </div>
+
+        <p class="footnote" id="err" style="color:var(--danger); display:none;"></p>
+      </div>
+      <p class="footnote">First time? <a href="enroll.html">Enroll your face once →</a> After that, check-in is just your roll number, the QR scan, and a quick liveness check each class.</p>
+    </div>
+  </main>
+</div>
+
+<script src="js/store.js"></script>
+<script src="js/util.js"></script>
+<script>
+  const form = document.getElementById('lookup-form');
+  const err = document.getElementById('err');
+  const pageAlert = document.getElementById('page-alert');
+  const rollNoInput = document.getElementById('rollNo');
+  const confirmCard = document.getElementById('confirm-card');
+
+  let pendingRecord = null;
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    err.style.display = 'none';
+    pageAlert.innerHTML = '';
+
+    const rollNo = rollNoInput.value.trim().toUpperCase();
+    const record = Store.getEnrolledStudent(rollNo);
+
+    if (!record) {
+      pageAlert.innerHTML = `<div class="alert alert-warn">No enrollment found for <strong>${Util.escapeHtml(rollNo)}</strong>. You need to enroll your face once before you can check in. <a href="enroll.html" style="color:inherit; text-decoration:underline;">Enroll now →</a></div>`;
+      return;
+    }
+
+    pendingRecord = record;
+    document.getElementById('confirm-name').textContent = record.name;
+    document.getElementById('confirm-branch').textContent = record.branch;
+    form.style.display = 'none';
+    confirmCard.style.display = 'block';
+  });
+
+  document.getElementById('yes-btn').addEventListener('click', () => {
+    if (!pendingRecord) return;
+    // Carries the roster entry — including its one-time faceDescriptor —
+    // forward as the active check-in student. liveness.html compares the
+    // live camera capture against THIS descriptor, never a fresh one.
+    Store.setCheckInStudent(pendingRecord);
+    window.location.href = 'scan.html';
+  });
+
+  document.getElementById('no-btn').addEventListener('click', () => {
+    pendingRecord = null;
+    confirmCard.style.display = 'none';
+    form.style.display = 'block';
+    rollNoInput.value = '';
+    rollNoInput.focus();
+  });
+</script>
+</body>
+</html>
